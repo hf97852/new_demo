@@ -1,7 +1,43 @@
+import sys
 
 # from vnpy_ctp.api.vnctpmd import MdApi
 from vnpy_tts.api.vnttsmd import MdApi
 from PySide6 import QtWidgets
+
+
+class SimpleWidget(QtWidgets.QWidget):
+    """简单图形控件"""
+    def __init__(self):
+        """构造函数"""
+        super().__init__()   #  这里要首先调用Qt对象C++中的构造函数
+
+        # 用来绑定api对象
+        self.api = None
+
+        # 基础图形控件
+        self.log_monitor = QtWidgets.QTextEdit()
+        self.log_monitor.setReadOnly(True)    # 设置只读，防止误删
+
+        self.subscribe_button = QtWidgets.QPushButton("订阅")
+        self.symbol_line = QtWidgets.QLineEdit()
+
+        # 连接按钮函数
+        self.subscribe_button.clicked.connect(self.subscribe_symbol)
+
+
+        # 设置布局命令
+        vbox = QtWidgets.QVBoxLayout()
+        vbox.addWidget(self.log_monitor)
+        vbox.addWidget(self.symbol_line)
+        vbox.addWidget(self.subscribe_button)
+
+        self.setLayout(vbox)
+        #self.setWindowTitle("simple")
+
+    def subscribe_symbol(self):
+        symbol = self.symbol_line.text()
+        self.api.subscribeMarketData(symbol)
+
 class CtpMdApi(MdApi):
 
     def __init__(self, monitor) -> None:
@@ -31,9 +67,10 @@ class CtpMdApi(MdApi):
 
             # 订阅行情推送
             # self.subscribeMarketData("rb2301")
-            self.subscribeMarketData("rb2406")
+            # self.subscribeMarketData("rb2406")
         else:
             self.monitor.append("行情服务器登陆失败",error)
+
 
     def onRtnDepthMarketData(self, data):
         """行情数据推送回调"""
@@ -46,12 +83,13 @@ def main():
     """主函数"""
     app = QtWidgets.QApplication()
 
-    monitor = QtWidgets.QTextEdit()
-    monitor.show()
+    widget = SimpleWidget()
+    widget.show()
+
 
     # 创建实例
-    api = CtpMdApi(monitor)
-
+    api = CtpMdApi(widget.log_monitor)
+    widget.api = api
     # 初始化底层
     api.createFtdcMdApi(".")
 
