@@ -2,10 +2,13 @@ import sys
 
 # from vnpy_ctp.api.vnctpmd import MdApi
 from vnpy_tts.api.vnttsmd import MdApi
-from PySide6 import QtWidgets
+from PySide6 import QtWidgets, QtCore
 
 
 class SimpleWidget(QtWidgets.QWidget):
+
+    signal = QtCore.Signal(str)    # 定义一个QT事件机制中的信号
+
     """简单图形控件"""
     def __init__(self):
         """构造函数"""
@@ -23,6 +26,7 @@ class SimpleWidget(QtWidgets.QWidget):
 
         # 连接按钮函数
         self.subscribe_button.clicked.connect(self.subscribe_symbol)
+        self.signal.connect(self.log_monitor.append)    # 子线程不能修改主线程中的图形界面，只能通过信号槽的方式，来传递信息。 3：55分讲解。插槽：log_monitor  ,一个信号对多个插槽，多个信号对一个插槽
 
 
         # 设置布局命令
@@ -40,13 +44,13 @@ class SimpleWidget(QtWidgets.QWidget):
 
 class CtpMdApi(MdApi):
 
-    def __init__(self, monitor) -> None:
+    def __init__(self, widget) -> None:
         super().__init__()
 
-        self.monitor = monitor
+        self.widget = widget
 
     def onFrontConnected(self):
-        self.monitor.append("服务器连接成功")
+        self.widget.signal.emit("服务器连接成功")
 
         ctp_req: dict = {
             # "UserId": "000300",
@@ -59,22 +63,22 @@ class CtpMdApi(MdApi):
         self.reqUserLogin(ctp_req,1)
 
     def onFrontDisconnected(self, reason) -> None:
-        self.monitor.append("服务器连接断开", reason)
+        self.widget.signal.emit("服务器连接断开", reason)
 
     def onRspUserLogin(self, data, error, reqid, last):
         if not error["ErrorID"]:
-            self.monitor.append("行情服务器登陆成功")
+            self.widget.signal.emit("行情服务器登陆成功")
 
             # 订阅行情推送
             # self.subscribeMarketData("rb2301")
             # self.subscribeMarketData("rb2406")
         else:
-            self.monitor.append("行情服务器登陆失败",error)
+            self.widget.signal.emit("行情服务器登陆失败",error)
 
 
     def onRtnDepthMarketData(self, data):
         """行情数据推送回调"""
-        self.monitor.append(str(data))
+        self.widget.signal.emit(str(data))
 
 
 
@@ -88,7 +92,7 @@ def main():
 
 
     # 创建实例
-    api = CtpMdApi(widget.log_monitor)
+    api = CtpMdApi(widget)
     widget.api = api
     # 初始化底层
     api.createFtdcMdApi(".")
