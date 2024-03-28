@@ -1,14 +1,16 @@
 
 # from vnpy_ctp.api.vnctpmd import MdApi
 from vnpy_tts.api.vnttsmd import MdApi
-
+from PySide6 import QtWidgets
 class CtpMdApi(MdApi):
 
-    def __init__(self) -> None:
+    def __init__(self, monitor) -> None:
         super().__init__()
 
+        self.monitor = monitor
+
     def onFrontConnected(self):
-        print("服务器连接成功")
+        self.monitor.append("服务器连接成功")
 
         ctp_req: dict = {
             # "UserId": "000300",
@@ -21,30 +23,34 @@ class CtpMdApi(MdApi):
         self.reqUserLogin(ctp_req,1)
 
     def onFrontDisconnected(self, reason) -> None:
-        print("服务器连接断开", reason)
+        self.monitor.append("服务器连接断开", reason)
 
     def onRspUserLogin(self, data, error, reqid, last):
         if not error["ErrorID"]:
-            print("行情服务器登陆成功")
+            self.monitor.append("行情服务器登陆成功")
 
             # 订阅行情推送
             # self.subscribeMarketData("rb2301")
             self.subscribeMarketData("rb2406")
         else:
-            print("行情服务器登陆失败",error)
+            self.monitor.append("行情服务器登陆失败",error)
 
     def onRtnDepthMarketData(self, data):
         """行情数据推送回调"""
-        print(data)
-        # print(data)
-        # print(error)
+        self.monitor.append(str(data))
+
 
 
 
 def main():
     """主函数"""
+    app = QtWidgets.QApplication()
+
+    monitor = QtWidgets.QTextEdit()
+    monitor.show()
+
     # 创建实例
-    api = CtpMdApi()
+    api = CtpMdApi(monitor)
 
     # 初始化底层
     api.createFtdcMdApi(".")
@@ -58,8 +64,7 @@ def main():
     # 发起连接
     api.init()
 
-    # 阻塞主进程推出
-    input()
+    app.exec()
 
 
 if __name__ == '__main__':
