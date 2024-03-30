@@ -1,12 +1,17 @@
 
-from vnpy_tts.api.vnttsmd import MdApi
+# from vnpy_tts.api.vnttsmd import MdApi
 from vnpy.event import EventEngine, Event
+from vnpy.trader.event import EVENT_LOG, EVENT_TICK
+from vnpy.trader.constant import Exchange
+from vnpy.trader.object import TickData, LogData, SubscribeRequest
+from vnpy_ctp import CtpGateway
 
 from PySide6 import QtWidgets, QtCore
 
+
 class SimpleWidget(QtWidgets.QWidget):
 
-    signal = QtCore.Signal(str)    # 定义一个QT事件机制中的信号
+    # signal = QtCore.Signal(str)    # 定义一个QT事件机制中的信号
 
     """简单图形控件"""
     def __init__(self, event_engine: EventEngine) -> None:
@@ -14,15 +19,17 @@ class SimpleWidget(QtWidgets.QWidget):
         super().__init__()   #  这里要首先调用Qt对象C++中的构造函数
 
         self.event_engine: EventEngine = event_engine
-        self.event_engine.register("log", self.update_log)
+        # self.event_engine.register("log", self.update_log)
+        self.event_engine.register(EVENT_LOG, self.process_log_event)
+        self.event_engine.register(EVENT_TICK, self.process_tick_event)
 
-        self.api = None
+        # 用于绑定API对象
+        self.gateway: CtpGateway = None
 
         # 定义要在事件引擎中使用的处理程序函数
         # HandlerType: callable = Callable[[Event], None] 定义一个HandlerType变量类型，此变量类型为一个可调用的对象类型（此对象为接受一个Event参数，返回值为None的函数名）。
         # Callable：表示可调用对象的类型。
         # print(HandlerType) 输出：typing.Callable[[__main__.Event], NoneType]； type(HandlerType) 输出：typing._CallableGenericAlias
-
 
         # 基础图形控件
         self.log_monitor: QtWidgets.QTextEdit = QtWidgets.QTextEdit()
@@ -33,7 +40,8 @@ class SimpleWidget(QtWidgets.QWidget):
 
         # 连接按钮函数
         self.subscribe_button.clicked.connect(self.subscribe_symbol)
-        self.signal.connect(self.log_monitor.append)    # 子线程不能修改主线程中的图形界面，只能通过信号槽的方式，来传递信息。 3：55分讲解。插槽：log_monitor  ,一个信号对多个插槽，多个信号对一个插槽
+
+        # self.signal.connect(self.log_monitor.append)    # 子线程不能修改主线程中的图形界面，只能通过信号槽的方式，来传递信息。 3：55分讲解。插槽：log_monitor  ,一个信号对多个插槽，多个信号对一个插槽
 
 
         # 设置布局命令
@@ -47,61 +55,32 @@ class SimpleWidget(QtWidgets.QWidget):
 
     def subscribe_symbol(self) -> None:
         """订阅行情"""
-        symbol: str = self.symbol_line.text()
-        self.api.subscribeMarketData(symbol)    # 订阅多个合约时，c++封装类内部是怎么个间隔回调法？
+        vt_symbol: str = self.symbol_line.text()
+        symbol, exchange_str = vt_symbol.split(".")
 
-    def update_log(self, event: Event) -> None:
+        req = SubscribeRequest(
+            symbol = symbol,
+            exchange = Exchange(exchange_str)
+        )
+        self.gateway.subscribe(req)
+
+        # self.api.subscribeMarketData(symbol)    # 订阅多个合约时，c++封装类内部是怎么个间隔回调法？
+
+    def process_log_event(self, event: Event) -> None:
         """更新日志"""
-        msg: str = event.data
-        self.signal.emit(msg)
+        log: LogData = event.data
+        self.log_monitor.append(log.msg)
+
+    def process_tick_event(self, event: Event) -> None:
+        """更新行情"""
+        tick: TickData = event.data
+        self.log_monitor.append(str(tick))
 
 
-class CtpMdApi(MdApi):
-
-    def __init__(self, event_engine: EventEngine) -> None:
-        super().__init__()
-
-        self.event_engine: EventEngine = event_engine
-
-    def onFrontConnected(self):
-        """服务器连接成功回报"""
-        self.write_log("行情服务器连接成功") # 将”log"，“行情服务器连接成功” 压入队列。 由于先前widget实例时，注册“log"、”update_log"进入_handlers字典，线程_run获取队列中的事件类型log，分发给update_log函数并执行。
-
-        ctp_req: dict = {
-            # "UserId": "000300",
-            "UserId": "9076",
-            "Password": "123456",
-            # "Password": "vnpy1234",
-            "BrokerID": "9999"
-        }
-
-        self.reqUserLogin(ctp_req,1)
-
-    def onFrontDisconnected(self, reason: int) -> None:
-        """服务器连接断开回报"""
-        self.write_log(f"服务器连接断开{reason}")
-
-    def onRspUserLogin(self, data: dict, error: dict, reqid: int, last: bool) -> None:
-        """用户登陆请求回报"""
-        if not error["ErrorID"]:
-            self.write_log("行情服务器登陆成功")  #同上，写入队列，由线程分发并调用update_log函数。
-
-            # 订阅行情推送
-            # self.subscribeMarketData("rb2301")
-            # self.subscribeMarketData("rb2406")
-        else:
-            self.write_log(f"行情服务器登陆失败{error}")
-
-
-    def onRtnDepthMarketData(self, data: dict) -> None:
-        """行情数据推送回调"""
-        self.write_log(str(data))    # 间隔的行情数据推送回调，由线程_run分发执行update_log函数显示在log_monitor上。
-
-    def write_log(self, msg: str) -> None:
-        """"""
-        event: Event = Event("log", msg)
-        self.event_engine.put(event)
-
+#   def update_log(self, event: Event) -> None:
+ #       """更新日志"""
+  #      msg: str = event.data
+   #     self.signal.emit(msg)
 
 
 def main():
@@ -122,21 +101,19 @@ def main():
     widget: SimpleWidget = SimpleWidget(event_engine)
     widget.show()
 
-    # 创建API实例
-    api: CtpMdApi = CtpMdApi(event_engine)      # event_engine 同时传给widget, api，应该为公共变量。
-    widget.api = api
-
-    # 初始化底层
-    api.createFtdcMdApi(".")
-
-    # 注册服务器地址
-    #api.registerFront("tcp://180.168.146.187:10130")
- # api.registerFront("tcp://122.51.136.165 20004")  //tts
- #    api.registerFront("tcp://121.37.90.193:20002")   仿真环境 交易前置登陆失败
-    api.registerFront("tcp://121.37.80.177:20004")
-
-    # 发起连接
-    api.init()
+    # CTP交易接口
+    ctp_setting = {
+        "用户名": "000300",
+        "密码": "vnpy1234",
+        "经纪商代码": "9999",
+        "交易服务器": "180.168.146.187:10130",
+        "行情服务器": "180.168.146.187:10131",
+        "产品名称": "simnow_client_test",
+        "授权编码": "0000000000000000"
+    }
+    ctp_gateway = CtpGateway(event_engine, 'CTP')   # 实例ctp_gateway时，绑定CtpMdApi的实例，CtpMdApi实例又反过来绑定ctp_gateway实例。
+    ctp_gateway.connect(ctp_setting)   # 也包括api实例（成员变量）、初始化底层、注册服务器地址、发起连接api.init()。然后回调函数服务器连接成功，再发起登陆
+    widget.gateway = gateway = ctp_gateway
 
     # 启动主线程UI循环
     app.exec()
@@ -144,6 +121,8 @@ def main():
     # 关闭事件引擎
     event_engine.stop()
 
+    gateway.close()
 
-if __name__ == '__main__':
+
+if __name__ == '__main__':  # IF2405.CFFEX查询成功！
     main()
