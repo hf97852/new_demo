@@ -9,6 +9,8 @@ from vnpy.trader.gateway import BaseGateway
 from vnpy_tts import TtsGateway as CtpGateway
 
 from PySide6 import QtWidgets
+from collections import defaultdict
+
 
 
 class SimpleWidget(QtWidgets.QWidget):
@@ -103,9 +105,10 @@ class MonitorEngine:
         # self.event_engine.register(EVENT_TIMER, self.process_timer_event)  # 定时事件触发，再定时事件中触发：查询资金账户、持仓信息。
         self.event_engine.register(EVENT_LOG, self.process_log_event)
 
-        self.tick_history: list[TickData] = []
-        self.trading_symbol: str = "IF2405.CFFEX"
-        self.trading_target: int = 0
+        self.tick_history: dict[str, list[TickData]] = defaultdict(list)
+        self.trading_symbols: set[str] = set(["IF2405.CFFEX", "IH2405.CFFEX", "IC2405.CFFEX",])
+        self.trading_targets: dict[str, int] = defaultdict(int)
+
 
     def process_tick_event(self, event: Event) -> None:      # 而subscribe函数在持仓事件中订阅行情！
         """行情事件"""
@@ -113,10 +116,11 @@ class MonitorEngine:
         self.ticks[tick.vt_symbol] = tick      # 分别保存持仓合约的行情数据。
 
         # 缓存交易合约的Tick历史
-        if tick.vt_symbol == self.trading_symbol:
-            self.tick_history.append(tick)
+        if tick.vt_symbol in self.trading_symbols:
+            history: list[TickData] = self.tick_history[tick.vt_symbol]
+            history.append(tick)
 
-            self.run_trading()
+            self.run_trading(tick.vt_symbol)
 
     def process_contract_event(self, event: Event) -> None:   # 交易服务器连接、登陆、结算信息确认成功——》请求查询合约——》查询合约回调，合约压入事件队列。
         # 说明：查询合约信息有多条，每条保存symbol_contract_map全局缓存字典中。
@@ -126,7 +130,7 @@ class MonitorEngine:
         # 【（答：估计while()循环查询合约，才能不停的订阅.trading_symbol的行情数据，才能解释tick数据大于3个，才能执行后面的买卖策略。）】
 
         # 订阅策略合约行情
-        if contract.vt_symbol == self.trading_symbol:  # 请求一个合约、压入队列（此处一个循环），马上取出执行process_contract_event（一个线程中执行），接着压订阅行情、行情回报、压入队列，这个线程再从事件队列（含有EVENT_CONTRACT、EVENT_TICK）中，分发与处理事件。
+        if contract.vt_symbol in self.trading_symbols:  # 请求一个合约、压入队列（此处一个循环），马上取出执行process_contract_event（一个线程中执行），接着压订阅行情、行情回报、压入队列，这个线程再从事件队列（含有EVENT_CONTRACT、EVENT_TICK）中，分发与处理事件。
             req = SubscribeRequest(contract.symbol, contract.exchange)
             self.gateway.subscribe(req)   # 查询合约、与交易合约的行情事件同时存在队列中，即队列含有EVENT_CONTRACT、EVENT_TICK。 （最终都会将合约放入contracts中，其中trading_symbol订阅行情数据同时保存在ticks、 tick_history中）
 
@@ -173,23 +177,24 @@ class MonitorEngine:
             value = position.volume * tick.last_price * contract.size
             print(f"{position.vt_symbol} {position.direction}当前持仓市值{value}")
 
-    def run_trading(self) -> None:
+    def run_trading(self, vt_symbol: str) -> None:
         """执行策略交易"""
         # 检查至少要3个Tick
-        if len(self.tick_history) < 3:   # 从此处知道一个tick是一个切面行情数据。
+        history = self.tick_history[vt_symbol]
+        if len(history) < 3:   # 从此处知道一个tick是一个切面行情数据。
             return
         # 提取行情和合约
-        tick1 = self.tick_history[-1]
-        tick2 = self.tick_history[-2]
-        tick3 = self.tick_history[-3]
+        tick1 = history[-1]
+        tick2 = history[-2]
+        tick3 = history[-3]
 
-        contract = self.contracts[self.trading_symbol]
+        contract = self.contracts[vt_symbol]
 
         # print(tick1.datetime, tick1.last_price, self.trading_target)
 
         # 多头检查
         if tick1.last_price > tick2.last_price > tick3.last_price:
-            if not self.trading_target:
+            if not self.trading_targets[vt_symbol]:
                 req = OrderRequest(
                     symbol=contract.symbol,
                     exchange=contract.exchange,
@@ -201,12 +206,12 @@ class MonitorEngine:
                 )
                 self.gateway.send_order(req)
 
-                self.trading_target = 1
-                print(f"{self.trading_symbol}买入开仓1手", tick1.datetime)
+                self.trading_targets[vt_symbol] = 1
+                print(f"{vt_symbol}买入开仓1手", tick1.datetime)
 
         # 空头检查
         if tick1.last_price < tick2.last_price < tick3.last_price:
-            if self.trading_target > 0:
+            if self.trading_targets[vt_symbol] > 0:
                 req = OrderRequest(
                     symbol=contract.symbol,
                     exchange=contract.exchange,
@@ -218,8 +223,8 @@ class MonitorEngine:
                 )
                 self.gateway.send_order(req)
 
-                self.trading_target = 0
-                print(f"{self.trading_symbol}卖出平仓1手", tick1.datetime)
+                self.trading_targets[vt_symbol] = 0
+                print(f"{vt_symbol}卖出平仓1手", tick1.datetime)
                 
 def main():
     """主函数"""
